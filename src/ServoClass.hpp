@@ -14,6 +14,8 @@ private:
   int updateInterval = 30;  // interval between updates
   unsigned long lastUpdate; // last update of position
   int targetDeg;
+  int timedDuration;
+  unsigned long startTime;
 
   int getPulseWidth(int degrees)
   {
@@ -47,6 +49,12 @@ public:
   void setStartPos(int degree) { pos = degree; } // used for start pos or for robot startup
   int getPos() { return pos; }                   // return last position
 
+  void directDrive(int degree) {
+    /// Drive motor directly to a position
+    double pulse = inverse ? supplementaryPulseWidth(degree) : getPulseWidth(degree);
+    pwm->setPWM(pin, 0, pulse);
+  }
+
   void setMovement(int degree, int stepInterval)
   {
     targetDeg = degree;
@@ -55,6 +63,33 @@ public:
     if (targetDeg < pos)
     {
       increment = -1;
+    }
+  }
+
+  void setMoveWithDuration(int targetDegree, int durationMillis)
+  {
+    startTime = millis();           // Record the start time
+    targetDeg = targetDegree;       // Set the target position
+    timedDuration = durationMillis; // Set the duration for movement
+  }
+
+  void updateWithDuration()
+  {
+    unsigned long elapsedTime = millis() - startTime; // Calculate elapsed time
+
+    if (elapsedTime <= timedDuration) // Check if movement duration hasn't elapsed
+    {
+      // Calculate the position based on elapsed time and target position
+      int currentPos = map(elapsedTime, 0, timedDuration, pos, targetDeg + 1);
+      double pulse = inverse ? supplementaryPulseWidth(currentPos) : getPulseWidth(currentPos);
+      pwm->setPWM(pin, 0, pulse);
+    }
+    else // Movement duration has elapsed
+    {
+      // Move to the target position directly (doesn't usually hit the target exactly during duration)
+      double pulse = inverse ? supplementaryPulseWidth(targetDeg) : getPulseWidth(targetDeg);
+      pwm->setPWM(pin, 0, pulse);
+      pos = targetDeg;
     }
   }
 
@@ -67,7 +102,8 @@ public:
       {
         lastUpdate = millis();
         pos += increment;
-        pwm->setPWM(pin, 0, getPulseWidth(pos));
+        double pulse = inverse ? supplementaryPulseWidth(pos) : getPulseWidth(pos);
+        pwm->setPWM(pin, 0, pulse);
         // Serial.println(pos);
         if (increment < 0)
         {
