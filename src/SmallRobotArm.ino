@@ -1,9 +1,6 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 #include "ServoClass.hpp"
-// #include "ServoClassChatGPT.hpp"
-
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 #define DEFAULT_INTERVAL 50
 #define MICROSERVOMIN 100 // This is the 'minimum' pulse length count (out of 4096)
@@ -12,25 +9,32 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 #define SERVOMAX 490
 #define SERVO_FREQ 50 // Analog servos run at ~50 Hz updates
 #define PI 3.14159
+#define RADIANS_OFF 180/PI
+#define DEBUG true
 
 double armOneLength = 102;
 double armTwoLength = 77.5;
 
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 ServoClass *rotator;
 int rotatorStartPos = 90;
 bool rotatorFlag = false;
 ServoClass *shoulder;
-int shoulderStartPos = 0;
+int shoulderStartPos = 115;
 bool shoulderFlag = false;
 ServoClass *elbow;
-int elbowStartPos = 180;
+int elbowStartPos = 50;
 bool elbowFlag = false;
 ServoClass *wrist;
-int wristStartPos = 170; // TODO: should eventually be 0 when inverses are set
+int wristStartPos = 180;
 bool wristFlag = false;
 
 int joyXPin = A0;
 int joyYPin = A1;
+
+long lastUpdate;
+int updateInterval = 2000;
+bool forward = true;
 
 void setup()
 {
@@ -46,28 +50,11 @@ void setup()
 
   rotator = new ServoClass(0, 490, 100, false, &pwm);
   shoulder = new ServoClass(1, 490, 100, false, &pwm);
-  elbow = new ServoClass(2, 490, 100, false, &pwm);
+  elbow = new ServoClass(2, 490, 100, true, &pwm);
   wrist = new ServoClass(3, 490, 100, false, &pwm);
   startup();
 
   delay(10);
-}
-
-int getPulseWidth(int degrees)
-{
-  return map(degrees, 0, 180, SERVOMIN, SERVOMAX);
-}
-
-int supplementaryPulseWidth(int degrees)
-{
-  /* Get the "inverse" angle for a servo (ex: 45deg -> 135deg) */
-  return map((180 - degrees), 0, 180, SERVOMIN, SERVOMAX);
-}
-
-int supplementaryPulseValue(int pulse)
-{
-  /* Use in a loop when you have mixed-direction servos */
-  return SERVOMAX - pulse + SERVOMIN;
 }
 
 void startup()
@@ -81,61 +68,92 @@ void startup()
 
 void resetPosition()
 {
+  // TODO: switch to timed movement
   int resetSpeed = 50;
   rotator->setMovement(rotatorStartPos, resetSpeed);
+  rotatorFlag = true;
   shoulder->setMovement(shoulderStartPos, resetSpeed);
+  shoulderFlag = true;
   elbow->setMovement(elbowStartPos, resetSpeed);
+  elbowFlag = true;
   wrist->setMovement(wristStartPos, resetSpeed);
+  wristFlag = true;
 }
 
 void moveToCoords(double x, double y, double z)
 {
-  Serial.print("x: ");
-  Serial.print(x);
-  Serial.print(", y: ");
-  Serial.print(y);
-  Serial.print(", z: ");
-  Serial.println(z);
+  // TODO: add hard limits based on physical restrictions
+  double baseAngle = atan(x / y) * RADIANS_OFF; // angle to rotate the base
+  double armDistance = sqrt(sq(x) + sq(y));    // pythagoras theorem - how far out the arm reaches in x/y
 
-  double baseAngle = atan(x/y) * (180 / PI);
-  double armDistance = sqrt(sq(x) + sq(y)); // pythagoras theorem
-  Serial.print("armDistance: ");
-  Serial.println(armDistance);
+  double h = sqrt(sq(z) + sq(armDistance)); // hypotenuse for the first two arm links
 
-  double sideH = sqrt(sq(z) + sq(armDistance));
-  Serial.print("sideH: ");
-  Serial.println(sideH);
-  // Law of Cosines
-  double armOneAngle = (sq(armOneLength) + sq(sideH) - sq(armTwoLength)) / (2 * armOneLength * sideH);
-  armOneAngle = acos(armOneAngle) * (180 / PI);
-  double phi = atan(z/armDistance) * (180 / PI);
+  // Law of Cosines - find the missing angles using side lengths
+  double armOneAngle = (sq(armOneLength) + sq(h) - sq(armTwoLength)) / (2 * armOneLength * h);
+  armOneAngle = acos(armOneAngle) * RADIANS_OFF;
+  double phi = atan(z / armDistance) * RADIANS_OFF;
   armOneAngle += phi;
-  double armTwoAngle = (sq(armOneLength) + sq(armTwoLength) - sq(sideH)) / (2 * armOneLength * armTwoLength);
-  armTwoAngle = acos(armTwoAngle) * (180 / PI);
-  // rotator->setMovement(baseAngle, 100);
-  // rotator->setMoveWithDuration(baseAngle, 1000);
-  rotator->directDrive(baseAngle);
+  double armTwoAngle = (sq(armOneLength) + sq(armTwoLength) - sq(h)) / (2 * armOneLength * armTwoLength);
+  armTwoAngle = acos(armTwoAngle) * RADIANS_OFF;
+
+  // Calculations to keep the wrist parallel to the ground - see reference photo for an example
+  // There is probably a better way to do this, but it works and are simple calculations
+  double a3 = 180 - (armOneAngle - phi) - armTwoAngle; // third angle - 180deg minus our other angles
+  double a4 = 180 - phi - 90; 
+  double a5 = 180 - a4 - a3;
+  double a6 = a5 - 90;
+  double a7 = 180 - a6 - 90; // include 90deg offset
+  if (a7 > 180)
+    a7 -= 360; // our servo can't do more than 180deg, so subtract 360 to "wrap back around"
+
+  rotator->setMoveWithDuration(baseAngle, 1000);
   rotatorFlag = true;
-  // shoulder->setMovement(armOneAngle, 50);
-  // shoulder->setMoveWithDuration(armOneAngle, 1000);
-  shoulder->directDrive(armOneAngle);
+  shoulder->setMoveWithDuration(armOneAngle, 1000);
   shoulderFlag = true;
-  // elbow->setMovement(armTwoAngle, 50);
-  // elbow->setMoveWithDuration(armTwoAngle, 1000);
-  elbow->directDrive(armTwoAngle);
+  elbow->setMoveWithDuration(armTwoAngle, 1000);
   elbowFlag = true;
-  Serial.print("Base angle: ");
-  Serial.print(baseAngle);
-  Serial.print(", Arm1 angle: ");
-  Serial.print(armOneAngle);
-  Serial.print(", Arm2 angle: ");
-  Serial.println(armTwoAngle);
+  wrist->setMoveWithDuration(a7, 1000);
+  wristFlag = true;
+
+  if (DEBUG)
+  {
+    Serial.print("x: ");
+    Serial.print(x);
+    Serial.print(", y: ");
+    Serial.print(y);
+    Serial.print(", z: ");
+    Serial.println(z);
+    Serial.print("Base angle: ");
+    Serial.print(baseAngle);
+    Serial.print(", phi: ");
+    Serial.print(phi);
+    Serial.print(", Arm1 angle: ");
+    Serial.print(armOneAngle);
+    Serial.print(", Arm2 angle: ");
+    Serial.println(armTwoAngle);
+  }
+}
+
+void inverseKinematicsDemo()
+{
+  if ((millis() - lastUpdate) > updateInterval)
+  {
+    lastUpdate = millis();
+    if (forward)
+    {
+      moveToCoords(0, 0, 150);
+      forward = false;
+    }
+    else
+    {
+      moveToCoords(0, 0, 80);
+      forward = true;
+    }
+  }
 }
 
 void serialCommands()
 {
-  // TODO: Inverse trigonometry time baby
-
   if (Serial.available() > 0)
   {
     String instruction = Serial.readStringUntil('\n');
@@ -144,12 +162,10 @@ void serialCommands()
     Serial.println(armPiece);
     int requestedDeg = instruction.substring(1, 4).toInt();
     Serial.println(requestedDeg);
-    // TODO: also parse for a given interval? idk man prob not neccessary
     switch (armPiece)
     {
     case 'r':
-      // rotator->setMovement(requestedDeg, DEFAULT_INTERVAL);
-      rotator->setMoveWithDuration(requestedDeg, 1000);
+      rotator->setMovement(requestedDeg, DEFAULT_INTERVAL);
       rotatorFlag = true;
       break;
     case 's':
@@ -165,7 +181,10 @@ void serialCommands()
       wristFlag = true;
       break;
     case 'c':
-      moveToCoords(20, 0, 10);
+      moveToCoords(60, 40, 80);
+      break;
+    case 'd':
+      inverseKinematicsDemo();
       break;
     case 'x':
       Serial.println("RESET");
@@ -179,54 +198,32 @@ void serialCommands()
 
 void loop()
 {
-  int joyX = analogRead(joyXPin);
-  int joyY = analogRead(joyYPin);
+  // int joyX = analogRead(joyXPin);
+  // int joyY = analogRead(joyYPin);
   // Serial.print(joyX);
   // Serial.print(", ");
   // Serial.println(joyY);
-  double mappedX = map(joyX, 1, 1024, 0, 100);
-  double mappedY = map(joyY, 1, 1024, 0, 100);
+  // double mappedX = map(joyX, 1, 1024, 0, 100);
+  // double mappedY = map(joyY, 1, 1024, 0, 100);
   // Serial.print("X: ");
   // Serial.print(mappedX);
   // Serial.print(", Y: ");
   // Serial.println(mappedY);
-  moveToCoords(50, 50, 20);
-  // serialCommands();
+  // moveToCoords(60, 40, 70);
+  serialCommands();
+  // inverseKinematicsDemo();
   // if (Serial.available() > 0)
   // {
   //   String instruction = Serial.readStringUntil('\n');
 
-  //   moveToCoords(25, 0, instruction.toInt());
+  //   moveToCoords(60, 40, instruction.toInt());
   // }
-  // if (rotatorFlag)
-  //   // rotator->update();
-  //   rotator->updateWithDuration();
-  // if (shoulderFlag)
-  //   shoulder->updateWithDuration();
-  // if (elbowFlag)
-  //   elbow->updateWithDuration();
-  // if (wristFlag)
-  //   wrist->updateWithDuration();
-
-  // for(int servo=0; servo<4; servo++) {
-  //     Serial.println(servo);
-  //     pwm.setPWM(servo, 0, pulselength);
-  //     delay(100);
-  // }
-  // TODO: Look at adafruit's millis guide
-  // for (int pulse = getPulseWidth(60); pulse < getPulseWidth(120); pulse++) {
-  //   Serial.println(pulse);
-  //   pwm.setPWM(0, 0, pulse);
-  //   pwm.setPWM(1, 0, supplementaryPulseValue(pulse));
-  //   pwm.setPWM(3, 0, pulse);
-  //   pwm.setPWM(2, 0, supplementaryPulseValue(pulse));
-  //   delay(30);
-  // }
-  // for (int pulse = getPulseWidth(120); pulse > getPulseWidth(60); pulse--) {
-  //   pwm.setPWM(0, 0, pulse);
-  //   pwm.setPWM(1, 0, supplementaryPulseValue(pulse));
-  //   pwm.setPWM(3, 0, pulse);
-  //   pwm.setPWM(2, 0, supplementaryPulseValue(pulse));
-  //   delay(30);
-  // }
+  if (rotatorFlag)
+    rotator->update();
+  if (shoulderFlag)
+    shoulder->update();
+  if (elbowFlag)
+    elbow->update();
+  if (wristFlag)
+    wrist->update();
 }

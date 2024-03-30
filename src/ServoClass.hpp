@@ -11,10 +11,10 @@ private:
   bool flippedRange;
   int pos = 0;              // current servo position
   int increment = 1;        // increment to move for each interval
-  int updateInterval = 30;  // interval between updates
+  int updateInterval = 0;   // interval between updates
   unsigned long lastUpdate; // last update of position
   int targetDeg;
-  int timedDuration;
+  int timedDuration = 0;
   unsigned long startTime;
 
   int getPulseWidth(int degrees)
@@ -27,12 +27,6 @@ private:
     /* Get the "inverse" angle for a servo (ex: 45deg -> 135deg) */
     return map((180 - degrees), 0, 180, minPulse, maxPulse);
   }
-
-  // int supplementaryPulseValue(int pulse)
-  // {
-  //   /* Use in a loop when you have mixed-direction servos */
-  //   return maxPulse - pulse + minPulse;
-  // }
 
 public:
   ServoClass(int pin, int maxPulse, int minPulse, bool inverse, Adafruit_PWMServoDriver *pwm)
@@ -49,8 +43,9 @@ public:
   void setStartPos(int degree) { pos = degree; } // used for start pos or for robot startup
   int getPos() { return pos; }                   // return last position
 
-  void directDrive(int degree) {
-    /// Drive motor directly to a position
+  void directDrive(int degree)
+  {
+    /// Drive motor directly to a position - only call every loop if you're slowly increasing deg
     double pulse = inverse ? supplementaryPulseWidth(degree) : getPulseWidth(degree);
     pwm->setPWM(pin, 0, pulse);
   }
@@ -90,12 +85,13 @@ public:
       double pulse = inverse ? supplementaryPulseWidth(targetDeg) : getPulseWidth(targetDeg);
       pwm->setPWM(pin, 0, pulse);
       pos = targetDeg;
+      timedDuration = 0;  // reset duration for update checking
     }
   }
 
-  void update()
-  /// Call to incrementally update position - use in loop() without a delay
+  void updateWithInterval()
   {
+    /// Call to incrementally update position - use in loop() without a delay
     if ((millis() - lastUpdate) > updateInterval) // time to update
     {
       if (increment) // don't send any more pulses if increment is 0
@@ -110,6 +106,7 @@ public:
           if ((pos <= targetDeg))
           {
             increment = 0;
+            updateInterval = 0; // reset interval for update checking
           }
         }
         else
@@ -117,9 +114,24 @@ public:
           if ((pos >= targetDeg))
           {
             increment = 0;
+            updateInterval = 0;
           }
         }
       }
+    }
+  }
+
+  void update()
+  {
+    // TODO: check to see if a duration is set and call a different update function if that is the case
+    //       so that we only have to call update() in loop() for any kind of update (maybe use the set() functions)
+    if (updateInterval > 0)
+    {
+      updateWithInterval();
+    }
+    else if (timedDuration > 0)
+    {
+      updateWithDuration();
     }
   }
 };
