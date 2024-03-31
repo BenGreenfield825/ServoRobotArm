@@ -1,6 +1,6 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
-#include "ServoClass.hpp"
+#include "PWMServoWrapper.hpp"
 
 #define DEFAULT_INTERVAL 50
 #define MICROSERVOMIN 100 // This is the 'minimum' pulse length count (out of 4096)
@@ -9,23 +9,23 @@
 #define SERVOMAX 490
 #define SERVO_FREQ 50 // Analog servos run at ~50 Hz updates
 #define PI 3.14159
-#define RADIANS_OFF 180/PI
+#define RADIANS_OFF 180 / PI
 #define DEBUG true
 
 double armOneLength = 102;
 double armTwoLength = 77.5;
 
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
-ServoClass *rotator;
+PWMServoWrapper *rotator;
 int rotatorStartPos = 90;
 bool rotatorFlag = false;
-ServoClass *shoulder;
+PWMServoWrapper *shoulder;
 int shoulderStartPos = 115;
 bool shoulderFlag = false;
-ServoClass *elbow;
+PWMServoWrapper *elbow;
 int elbowStartPos = 50;
 bool elbowFlag = false;
-ServoClass *wrist;
+PWMServoWrapper *wrist;
 int wristStartPos = 180;
 bool wristFlag = false;
 
@@ -48,10 +48,10 @@ void setup()
   pwm.setOscillatorFrequency(27000000);
   pwm.setPWMFreq(SERVO_FREQ); // Analog servos run at ~50 Hz updates
 
-  rotator = new ServoClass(0, 490, 100, false, &pwm);
-  shoulder = new ServoClass(1, 490, 100, false, &pwm);
-  elbow = new ServoClass(2, 490, 100, true, &pwm);
-  wrist = new ServoClass(3, 490, 100, false, &pwm);
+  rotator = new PWMServoWrapper(0, 490, 100, false, &pwm);
+  shoulder = new PWMServoWrapper(1, 490, 100, false, &pwm);
+  elbow = new PWMServoWrapper(2, 490, 100, true, &pwm);
+  wrist = new PWMServoWrapper(3, 490, 100, false, &pwm);
   startup();
 
   delay(10);
@@ -84,7 +84,7 @@ void moveToCoords(double x, double y, double z)
 {
   // TODO: add hard limits based on physical restrictions
   double baseAngle = atan(x / y) * RADIANS_OFF; // angle to rotate the base
-  double armDistance = sqrt(sq(x) + sq(y));    // pythagoras theorem - how far out the arm reaches in x/y
+  double armDistance = sqrt(sq(x) + sq(y));     // pythagoras theorem - how far out the arm reaches in x/y
 
   double h = sqrt(sq(z) + sq(armDistance)); // hypotenuse for the first two arm links
 
@@ -99,7 +99,7 @@ void moveToCoords(double x, double y, double z)
   // Calculations to keep the wrist parallel to the ground - see reference photo for an example
   // There is probably a better way to do this, but it works and are simple calculations
   double a3 = 180 - (armOneAngle - phi) - armTwoAngle; // third angle - 180deg minus our other angles
-  double a4 = 180 - phi - 90; 
+  double a4 = 180 - phi - 90;
   double a5 = 180 - a4 - a3;
   double a6 = a5 - 90;
   double a7 = 180 - a6 - 90; // include 90deg offset
@@ -152,6 +152,29 @@ void inverseKinematicsDemo()
   }
 }
 
+void joystickControl()
+{
+  // TODO: refactor for use in a function
+  // int joyX = analogRead(joyXPin);
+  // int joyY = analogRead(joyYPin);
+  // Serial.print(joyX);
+  // Serial.print(", ");
+  // Serial.println(joyY);
+  // double mappedX = map(joyX, 1, 1024, 0, 100);
+  // double mappedY = map(joyY, 1, 1024, 0, 100);
+  // Serial.print("X: ");
+  // Serial.print(mappedX);
+  // Serial.print(", Y: ");
+  // Serial.println(mappedY);
+
+  // if (Serial.available() > 0)
+  // {
+  //   String instruction = Serial.readStringUntil('\n');
+
+  //   moveToCoords(60, 40, instruction.toInt());
+  // }
+}
+
 void serialCommands()
 {
   if (Serial.available() > 0)
@@ -184,6 +207,7 @@ void serialCommands()
       moveToCoords(60, 40, 80);
       break;
     case 'd':
+      // TODO: change function to work in a loop if we do it thru this
       inverseKinematicsDemo();
       break;
     case 'x':
@@ -198,26 +222,8 @@ void serialCommands()
 
 void loop()
 {
-  // int joyX = analogRead(joyXPin);
-  // int joyY = analogRead(joyYPin);
-  // Serial.print(joyX);
-  // Serial.print(", ");
-  // Serial.println(joyY);
-  // double mappedX = map(joyX, 1, 1024, 0, 100);
-  // double mappedY = map(joyY, 1, 1024, 0, 100);
-  // Serial.print("X: ");
-  // Serial.print(mappedX);
-  // Serial.print(", Y: ");
-  // Serial.println(mappedY);
-  // moveToCoords(60, 40, 70);
   serialCommands();
-  // inverseKinematicsDemo();
-  // if (Serial.available() > 0)
-  // {
-  //   String instruction = Serial.readStringUntil('\n');
 
-  //   moveToCoords(60, 40, instruction.toInt());
-  // }
   if (rotatorFlag)
     rotator->update();
   if (shoulderFlag)
